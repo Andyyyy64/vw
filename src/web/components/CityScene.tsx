@@ -598,8 +598,8 @@ const CityContent = ({ layout, onHover, onFlyModeChange }: CityContentProps) => 
       <StreetLights bounds={bounds} />
       <FirstPersonControls
         initialPosition={initialPosition}
-        speed={30}
-        sprintMultiplier={2.5}
+        speed={8}
+        sprintMultiplier={1.5}
         groundHeight={2}
         onFlyModeChange={onFlyModeChange}
         initialFlyMode={true}

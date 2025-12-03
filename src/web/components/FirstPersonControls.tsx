@@ -29,8 +29,8 @@ interface FirstPersonControlsProps {
  * Space: ジャンプ / ダブルSpace: 飛行モード切替
  */
 export const FirstPersonControls = ({
-  speed = 15,
-  sprintMultiplier = 2,
+  speed = 0.1,
+  sprintMultiplier = 1.5,
   sensitivity = 0.002,
   initialPosition = [0, 2, 10],
   initialRotation = 0,
@@ -63,6 +63,10 @@ export const FirstPersonControls = ({
   const isFlying = useRef(initialFlyMode);
   const lastSpaceTime = useRef(0);
   const isOnGround = useRef(!initialFlyMode);
+
+  // 歩行ボブ（上下動）
+  const bobPhase = useRef(0);
+  const baseCameraHeight = useRef(groundHeight);
 
   // 初期位置設定
   useEffect(() => {
@@ -219,7 +223,9 @@ export const FirstPersonControls = ({
   useFrame((_, delta) => {
     if (!enabled) return;
 
-    const actualSpeed = speed * (keys.current.sprint ? sprintMultiplier : 1);
+    // 飛行モードでは速度を上げる
+    const flySpeedMultiplier = isFlying.current ? 1.8 : 1;
+    const actualSpeed = speed * flySpeedMultiplier * (keys.current.sprint ? sprintMultiplier : 1);
     const moveDistance = actualSpeed * delta;
 
     // カメラの前方向ベクトル
@@ -245,10 +251,29 @@ export const FirstPersonControls = ({
     if (keys.current.right) velocity.add(right);
     if (keys.current.left) velocity.sub(right);
 
-    if (velocity.length() > 0) {
+    // 移動と歩行ボブ
+    const isMoving = velocity.length() > 0;
+    if (isMoving) {
       velocity.normalize();
       velocity.multiplyScalar(moveDistance);
       camera.position.add(velocity);
+    }
+
+    // 地上モードでの歩行ボブ（上下動）
+    if (!isFlying.current && isOnGround.current && isMoving) {
+      // 歩行速度に応じてボブの周期を調整
+      const bobSpeed = keys.current.sprint ? 12 : 8;
+      bobPhase.current += delta * bobSpeed;
+
+      // 正弦波で滑らかな上下動（振幅は小さく）
+      const bobAmount = Math.sin(bobPhase.current) * 0.08;
+      camera.position.setY(baseCameraHeight.current + bobAmount);
+    } else {
+      // 停止時や飛行時はボブをリセット
+      bobPhase.current = 0;
+      if (!isFlying.current && isOnGround.current) {
+        baseCameraHeight.current = groundHeight;
+      }
     }
 
     // 垂直移動（ジャンプ/飛行）
