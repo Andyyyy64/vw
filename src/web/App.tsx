@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { TreeScene } from './components/TreeScene';
+import { CityScene } from './components/CityScene';
 import { StatsPanel } from './components/StatsPanel';
 import { FileNode } from '../shared/fileNode';
 
 /**
  * メインアプリケーションコンポーネント
- * ディレクトリ構造をフェッチして3Dで可視化
+ * ディレクトリ構造をフェッチして Code City として可視化
  */
 const App = () => {
   const [data, setData] = useState<FileNode | null>(null);
@@ -45,29 +45,71 @@ const App = () => {
           fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         }}
       >
+        {/* 都市アイコンアニメーション */}
         <div
           style={{
-            width: '60px',
-            height: '60px',
-            border: '3px solid rgba(59, 130, 246, 0.3)',
-            borderTop: '3px solid #3b82f6',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
+            fontSize: '64px',
             marginBottom: '20px',
+            animation: 'pulse 2s ease-in-out infinite',
           }}
-        />
+        >
+          🏙️
+        </div>
         <style>
           {`
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
+            @keyframes pulse {
+              0%, 100% { transform: scale(1); opacity: 1; }
+              50% { transform: scale(1.1); opacity: 0.8; }
+            }
+            @keyframes slideUp {
+              from { transform: translateY(10px); opacity: 0; }
+              to { transform: translateY(0); opacity: 1; }
             }
           `}
         </style>
-        <div style={{ fontSize: '18px', color: '#60a5fa' }}>Scanning directory...</div>
-        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>
-          Building visualization
+        <div
+          style={{
+            fontSize: '24px',
+            fontWeight: 'bold',
+            background: 'linear-gradient(135deg, #60a5fa, #a78bfa)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '8px',
+          }}
+        >
+          Code City
         </div>
+        <div style={{ fontSize: '14px', color: '#64748b', animation: 'slideUp 0.5s ease-out' }}>
+          Building your project...
+        </div>
+        <div
+          style={{
+            marginTop: '30px',
+            display: 'flex',
+            gap: '8px',
+          }}
+        >
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              style={{
+                width: '8px',
+                height: '30px',
+                background: `linear-gradient(180deg, #3b82f6, #1e3a5f)`,
+                borderRadius: '2px',
+                animation: `building 1s ease-in-out ${i * 0.1}s infinite`,
+              }}
+            />
+          ))}
+        </div>
+        <style>
+          {`
+            @keyframes building {
+              0%, 100% { height: 30px; }
+              50% { height: 50px; }
+            }
+          `}
+        </style>
       </div>
     );
   }
@@ -88,8 +130,8 @@ const App = () => {
           fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         }}
       >
-        <div style={{ fontSize: '48px', marginBottom: '20px' }}>⚠️</div>
-        <div style={{ fontSize: '18px', color: '#f87171' }}>Failed to load directory</div>
+        <div style={{ fontSize: '48px', marginBottom: '20px' }}>🏚️</div>
+        <div style={{ fontSize: '18px', color: '#f87171' }}>Failed to build city</div>
         <div style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>{error}</div>
       </div>
     );
@@ -97,35 +139,8 @@ const App = () => {
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
-      <TreeScene data={data} />
+      <CityScene data={data} />
       <StatsPanel data={data} />
-
-      {/* 操作ヒント */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: '20px',
-          right: '20px',
-          background: 'rgba(15, 23, 42, 0.8)',
-          padding: '12px 16px',
-          borderRadius: '8px',
-          color: '#64748b',
-          fontSize: '11px',
-          fontFamily: "'JetBrains Mono', monospace",
-          backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(100, 116, 139, 0.2)',
-        }}
-      >
-        <div style={{ marginBottom: '4px' }}>
-          <span style={{ color: '#94a3b8' }}>🖱️ Drag</span> to rotate
-        </div>
-        <div style={{ marginBottom: '4px' }}>
-          <span style={{ color: '#94a3b8' }}>⚙️ Scroll</span> to zoom
-        </div>
-        <div>
-          <span style={{ color: '#94a3b8' }}>👆 Hover</span> for details
-        </div>
-      </div>
 
       {/* プロジェクト名表示 */}
       <div
@@ -133,12 +148,13 @@ const App = () => {
           position: 'absolute',
           top: '20px',
           right: '20px',
-          background: 'rgba(15, 23, 42, 0.8)',
+          background: 'rgba(10, 10, 26, 0.9)',
           padding: '12px 20px',
           borderRadius: '8px',
           fontFamily: "'JetBrains Mono', monospace",
           backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(100, 116, 139, 0.2)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          zIndex: 100,
         }}
       >
         <div
@@ -149,7 +165,7 @@ const App = () => {
             marginBottom: '4px',
           }}
         >
-          Project
+          🏙️ Code City
         </div>
         <div style={{ color: '#60a5fa', fontSize: '16px', fontWeight: 'bold' }}>{data.name}</div>
       </div>

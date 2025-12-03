@@ -48,8 +48,8 @@ export const StatsPanel = ({ data }: StatsPanelProps) => {
           gap: '8px',
         }}
       >
-        <span style={{ fontSize: '20px' }}>📊</span>
-        Directory Stats
+        <span style={{ fontSize: '20px' }}>🏙️</span>
+        City Stats
       </div>
 
       {/* 概要統計 */}
@@ -61,8 +61,8 @@ export const StatsPanel = ({ data }: StatsPanelProps) => {
           marginBottom: '20px',
         }}
       >
-        <StatCard label="Files" value={stats.totalFiles} color="#f472b6" icon="📄" />
-        <StatCard label="Directories" value={stats.totalDirectories} color="#4ade80" icon="📁" />
+        <StatCard label="Buildings" value={stats.totalFiles} color="#f472b6" icon="🏢" />
+        <StatCard label="Districts" value={stats.totalDirectories} color="#4ade80" icon="🏘️" />
         <StatCard label="Max Depth" value={stats.maxDepth} color="#fbbf24" icon="📏" />
         <StatCard
           label="Total Size"
