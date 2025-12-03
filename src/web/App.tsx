@@ -1,25 +1,33 @@
 import React, { useEffect, useState } from 'react';
 import { CityScene } from './components/CityScene';
 import { StatsPanel } from './components/StatsPanel';
-import { FileNode } from '../shared/fileNode';
+import { FileNode, DependencyGraph } from '../shared/fileNode';
 
 /**
  * メインアプリケーションコンポーネント
- * ディレクトリ構造をフェッチして Code City として可視化
+ * ディレクトリ構造と依存グラフをフェッチして Code City として可視化
  */
 const App = () => {
   const [data, setData] = useState<FileNode | null>(null);
+  const [dependencies, setDependencies] = useState<DependencyGraph | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/structure')
-      .then((res) => {
+    // ディレクトリ構造と依存グラフを並行フェッチ
+    Promise.all([
+      fetch('/api/structure').then((res) => {
         if (!res.ok) throw new Error('Failed to fetch structure');
         return res.json();
-      })
-      .then((payload: FileNode) => {
-        setData(payload);
+      }),
+      fetch('/api/dependencies').then((res) => {
+        if (!res.ok) throw new Error('Failed to fetch dependencies');
+        return res.json();
+      }),
+    ])
+      .then(([structure, deps]: [FileNode, DependencyGraph]) => {
+        setData(structure);
+        setDependencies(deps);
         setLoading(false);
       })
       .catch((err) => {
@@ -139,8 +147,8 @@ const App = () => {
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
-      <CityScene data={data} />
-      <StatsPanel data={data} />
+      <CityScene data={data} dependencies={dependencies} />
+      <StatsPanel data={data} dependencies={dependencies} />
 
       {/* プロジェクト名表示 */}
       <div

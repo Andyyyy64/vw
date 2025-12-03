@@ -64,4 +64,3 @@ export const getSortedExtensions = (
     .map(([ext, count]) => ({ ext, count }))
     .sort((a, b) => b.count - a.count);
 };
-

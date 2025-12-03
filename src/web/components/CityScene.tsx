@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Stars, Text } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette, SMAA } from '@react-three/postprocessing';
 import * as THREE from 'three';
-import { FileNode } from '../../shared/fileNode';
+import { FileNode, DependencyGraph, ImportType } from '../../shared/fileNode';
 import {
   CityNode,
   generateCityLayout,
@@ -31,6 +31,15 @@ interface DistrictData {
   scale: [number, number, number];
   depth: number;
   node: CityNode;
+}
+
+// 依存関係の道路データ
+interface RoadConnection {
+  from: [number, number, number];
+  to: [number, number, number];
+  type: ImportType;
+  sourceFile: string;
+  targetFile: string;
 }
 
 // ============================
@@ -213,14 +222,151 @@ const Districts = ({ districts }: DistrictsProps) => {
 };
 
 // ============================
+// 依存関係の道路（import 関係をライン/チューブで描画）
+// ============================
+
+// import の種類に応じた色
+const getImportColor = (type: ImportType): string => {
+  switch (type) {
+    case 'default':
+      return '#f97316'; // オレンジ
+    case 'named':
+      return '#22d3ee'; // シアン
+    case 'namespace':
+      return '#a78bfa'; // パープル
+    case 'dynamic':
+      return '#f472b6'; // ピンク
+    case 'sideEffect':
+      return '#94a3b8'; // グレー
+    default:
+      return '#60a5fa';
+  }
+};
+
+interface DependencyRoadsProps {
+  connections: RoadConnection[];
+  hoveredFile: string | null;
+  onHover: (connection: RoadConnection | null) => void;
+}
+
+/**
+ * 依存関係を3D曲線で描画するコンポーネント
+ */
+const DependencyRoads = ({ connections, hoveredFile, onHover }: DependencyRoadsProps) => {
+  const { camera } = useThree();
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
+  // Raycaster の許容誤差（線の太さを考慮）
+  raycaster.params.Line.threshold = 0.5;
+
+  const groupRef = useRef<THREE.Group>(null);
+  const meshRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const hoveredIndexRef = useRef<number | null>(null);
+
+  // 画面中央からレイキャストでホバー判定
+  useFrame(() => {
+    if (!groupRef.current) return;
+
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+
+    const meshes = meshRefs.current.filter((m): m is THREE.Mesh => m !== null);
+    const intersects = raycaster.intersectObjects(meshes, false);
+
+    let newHoveredIndex: number | null = null;
+
+    if (intersects.length > 0) {
+      const hitMesh = intersects[0].object as THREE.Mesh;
+      const idx = meshRefs.current.indexOf(hitMesh);
+      if (idx !== -1) {
+        newHoveredIndex = idx;
+      }
+    }
+
+    if (newHoveredIndex !== hoveredIndexRef.current) {
+      if (newHoveredIndex !== null) {
+        onHover(connections[newHoveredIndex]);
+      } else {
+        onHover(null);
+      }
+      hoveredIndexRef.current = newHoveredIndex;
+    }
+  });
+
+  // ホバー中のファイルに関連する接続をハイライト
+  const isRelated = useCallback(
+    (conn: RoadConnection) => {
+      if (!hoveredFile) return false;
+      // 複数のパス形式でマッチ
+      const matchPath = (path: string) => {
+        if (path === hoveredFile) return true;
+        if (path.endsWith('/' + hoveredFile.split('/').pop())) return true;
+        if (hoveredFile.endsWith('/' + path.split('/').pop())) return true;
+        return false;
+      };
+      return matchPath(conn.sourceFile) || matchPath(conn.targetFile);
+    },
+    [hoveredFile]
+  );
+
+  return (
+    <group ref={groupRef}>
+      {connections.map((conn, i) => {
+        // 始点と終点の中間を上に上げてアーチ状にする
+        const midX = (conn.from[0] + conn.to[0]) / 2;
+        const midZ = (conn.from[2] + conn.to[2]) / 2;
+
+        const distance = Math.sqrt(
+          Math.pow(conn.to[0] - conn.from[0], 2) + Math.pow(conn.to[2] - conn.from[2], 2)
+        );
+        // アーチの高さを抑える（距離の10%程度、最大でも4）
+        const arcHeight = Math.min(Math.max(distance * 0.1, 0.5), 4);
+
+        // ベジェ曲線のポイント
+        const curve = useMemo(() => {
+          return new THREE.QuadraticBezierCurve3(
+            new THREE.Vector3(conn.from[0], conn.from[1], conn.from[2]),
+            new THREE.Vector3(midX, conn.from[1] + arcHeight, midZ),
+            new THREE.Vector3(conn.to[0], conn.to[1], conn.to[2])
+          );
+        }, [conn.from, conn.to, midX, midZ, arcHeight]);
+
+        const related = isRelated(conn);
+        // ホバー中のパイプ自体もハイライト
+        const isHovered = hoveredIndexRef.current === i;
+
+        const color = getImportColor(conn.type);
+        const opacity = related || isHovered ? 1 : hoveredFile ? 0.1 : 0.6;
+        const radius = related || isHovered ? 0.2 : 0.05; // 太さを調整
+
+        return (
+          <mesh
+            key={i}
+            ref={(el) => {
+              meshRefs.current[i] = el;
+            }}
+          >
+            <tubeGeometry args={[curve, 20, radius, 8, false]} />
+            <meshBasicMaterial
+              color={color}
+              transparent
+              opacity={opacity}
+              depthWrite={false} // 透過処理のため
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+};
+
+// ============================
 // 道路と地面
 // ============================
 
-interface RoadsProps {
+interface GroundRoadsProps {
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
 }
 
-const Roads = ({ bounds }: RoadsProps) => {
+const GroundRoads = ({ bounds }: GroundRoadsProps) => {
   const width = bounds.maxX - bounds.minX + 40;
   const depth = bounds.maxZ - bounds.minZ + 40;
   const centerX = (bounds.minX + bounds.maxX) / 2;
@@ -356,10 +502,40 @@ const Environment = () => {
 
 interface BuildingInfoProps {
   node: CityNode | null;
+  dependencies: DependencyGraph | null;
 }
 
-const BuildingInfo = ({ node }: BuildingInfoProps) => {
+const BuildingInfo = ({ node, dependencies }: BuildingInfoProps) => {
   if (!node) return null;
+
+  // パスを柔軟に検索するヘルパー
+  const findDeps = (targetPath: string, depMap: Record<string, any[]> | undefined) => {
+    if (!depMap) return [];
+    if (depMap[targetPath]) return depMap[targetPath];
+
+    // プロジェクトルートを除去したパスで検索
+    const relative = targetPath.replace(/^.*\/src\//, 'src/').replace(/^[^/]+\//, '');
+    if (depMap[relative]) return depMap[relative];
+
+    // src/ 付きで検索
+    if (depMap['src/' + relative]) return depMap['src/' + relative];
+
+    // ファイル名だけで検索（最終手段）
+    const fileName = targetPath.split('/').pop();
+    if (fileName) {
+      // キーの末尾がファイル名と一致するものを探す
+      const foundKey = Object.keys(depMap).find((k) => k.endsWith(fileName));
+      if (foundKey) return depMap[foundKey];
+    }
+
+    return [];
+  };
+
+  const imports = findDeps(node.path, dependencies?.imports);
+  const importedBy = findDeps(node.path, dependencies?.importedBy);
+
+  // ファイル名を短く表示するヘルパー
+  const shortName = (path: string) => path.split('/').pop() || path;
 
   return (
     <div
@@ -378,7 +554,7 @@ const BuildingInfo = ({ node }: BuildingInfoProps) => {
         boxShadow: '0 0 30px rgba(96, 165, 250, 0.2)',
         backdropFilter: 'blur(10px)',
         zIndex: 100,
-        maxWidth: '600px',
+        maxWidth: '700px',
         textAlign: 'center',
       }}
     >
@@ -394,6 +570,8 @@ const BuildingInfo = ({ node }: BuildingInfoProps) => {
         🏢 {node.name}
       </div>
       <div style={{ opacity: 0.6, fontSize: '12px', marginBottom: '8px' }}>{node.path}</div>
+
+      {/* サイズと高さ */}
       {node.size > 0 && (
         <div
           style={{
@@ -416,6 +594,170 @@ const BuildingInfo = ({ node }: BuildingInfoProps) => {
           </div>
         </div>
       )}
+
+      {/* 依存関係詳細 */}
+      {imports.length > 0 && (
+        <div
+          style={{
+            marginTop: '12px',
+            padding: '10px',
+            background: 'rgba(249, 115, 22, 0.1)',
+            borderRadius: '8px',
+            border: '1px solid rgba(249, 115, 22, 0.3)',
+            textAlign: 'left',
+          }}
+        >
+          <div
+            style={{ color: '#f97316', fontSize: '11px', marginBottom: '6px', fontWeight: 'bold' }}
+          >
+            → Imports ({imports.length})
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+            {imports.slice(0, 8).map((imp, i) => (
+              <span
+                key={i}
+                style={{
+                  background: 'rgba(249, 115, 22, 0.2)',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  color: '#fbbf24',
+                }}
+                title={imp.target}
+              >
+                {shortName(imp.target)}
+              </span>
+            ))}
+            {imports.length > 8 && (
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>+{imports.length - 8} more</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {importedBy.length > 0 && (
+        <div
+          style={{
+            marginTop: '8px',
+            padding: '10px',
+            background: 'rgba(139, 92, 246, 0.1)',
+            borderRadius: '8px',
+            border: '1px solid rgba(139, 92, 246, 0.3)',
+            textAlign: 'left',
+          }}
+        >
+          <div
+            style={{ color: '#a78bfa', fontSize: '11px', marginBottom: '6px', fontWeight: 'bold' }}
+          >
+            ← Imported by ({importedBy.length})
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+            {importedBy.slice(0, 8).map((imp, i) => (
+              <span
+                key={i}
+                style={{
+                  background: 'rgba(139, 92, 246, 0.2)',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  color: '#c4b5fd',
+                }}
+                title={imp.source}
+              >
+                {shortName(imp.source)}
+              </span>
+            ))}
+            {importedBy.length > 8 && (
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                +{importedBy.length - 8} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ============================
+// 道路情報表示（パイプホバー時）
+// ============================
+
+interface RoadInfoProps {
+  connection: RoadConnection | null;
+}
+
+const RoadInfo = ({ connection }: RoadInfoProps) => {
+  if (!connection) return null;
+
+  const shortName = (path: string) => path.split('/').pop() || path;
+  const color = getImportColor(connection.type);
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: '100px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        background: 'linear-gradient(135deg, rgba(15, 15, 30, 0.95), rgba(30, 41, 59, 0.9))',
+        padding: '16px 24px',
+        borderRadius: '16px',
+        color: 'white',
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: '14px',
+        border: `1px solid ${color}66`,
+        boxShadow: `0 0 20px ${color}33`,
+        backdropFilter: 'blur(10px)',
+        zIndex: 100,
+        maxWidth: '500px',
+        textAlign: 'center',
+      }}
+    >
+      <div
+        style={{
+          fontSize: '12px',
+          color: '#94a3b8',
+          marginBottom: '8px',
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+        }}
+      >
+        🔗 Import Connection
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontWeight: 'bold', color: '#c4b5fd' }}>
+            {shortName(connection.sourceFile)}
+          </div>
+          <div style={{ fontSize: '10px', color: '#6b7280' }}>Importer</div>
+        </div>
+
+        <div style={{ fontSize: '20px', color: color }}>→</div>
+
+        <div style={{ textAlign: 'left' }}>
+          <div style={{ fontWeight: 'bold', color: '#fbbf24' }}>
+            {shortName(connection.targetFile)}
+          </div>
+          <div style={{ fontSize: '10px', color: '#6b7280' }}>Imported</div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          marginTop: '12px',
+          display: 'inline-block',
+          padding: '4px 12px',
+          borderRadius: '20px',
+          background: `${color}22`,
+          color: color,
+          fontSize: '12px',
+          fontWeight: 'bold',
+        }}
+      >
+        {connection.type} import
+      </div>
     </div>
   );
 };
@@ -547,11 +889,21 @@ const kbdStyle: React.CSSProperties = {
 
 interface CityContentProps {
   layout: CityNode;
+  dependencies: DependencyGraph | null;
   onHover: (node: CityNode | null) => void;
+  onRoadHover: (connection: RoadConnection | null) => void;
   onFlyModeChange: (flying: boolean) => void;
+  hoveredFile: string | null;
 }
 
-const CityContent = ({ layout, onHover, onFlyModeChange }: CityContentProps) => {
+const CityContent = ({
+  layout,
+  dependencies,
+  onHover,
+  onRoadHover,
+  onFlyModeChange,
+  hoveredFile,
+}: CityContentProps) => {
   // ビルとディストリクトをフラット化
   const buildings = useMemo(() => {
     const flattened = flattenBuildings(layout);
@@ -567,8 +919,83 @@ const CityContent = ({ layout, onHover, onFlyModeChange }: CityContentProps) => 
     });
   }, [layout]);
 
+  // ファイルパス → 建物位置のマッピング（複数形式で登録）
+  const pathToPosition = useMemo(() => {
+    const map = new Map<string, [number, number, number]>();
+    for (const b of buildings) {
+      const fullPath = b.node.path;
+      // 複数の形式でマッピングを登録
+      map.set(fullPath, b.position);
+
+      // プロジェクト名を除いた相対パス (vw/src/... → src/...)
+      const withoutRoot = fullPath.replace(/^[^/]+\//, '');
+      map.set(withoutRoot, b.position);
+
+      // ファイル名のみ
+      const fileName = b.node.name;
+      if (!map.has(fileName)) {
+        map.set(fileName, b.position);
+      }
+    }
+    return map;
+  }, [buildings]);
+
+  // 依存関係を道路接続データに変換
+  const roadConnections = useMemo((): RoadConnection[] => {
+    if (!dependencies) return [];
+
+    const connections: RoadConnection[] = [];
+
+    // パスを正規化して検索するヘルパー
+    const findPosition = (filePath: string): [number, number, number] | undefined => {
+      // そのまま検索
+      if (pathToPosition.has(filePath)) return pathToPosition.get(filePath);
+
+      // src/ を追加して検索
+      if (!filePath.startsWith('src/')) {
+        const withSrc = 'src/' + filePath;
+        if (pathToPosition.has(withSrc)) return pathToPosition.get(withSrc);
+      }
+
+      // 末尾のファイル名で検索
+      const fileName = filePath.split('/').pop();
+      if (fileName && pathToPosition.has(fileName)) return pathToPosition.get(fileName);
+
+      return undefined;
+    };
+
+    for (const [sourceFile, imports] of Object.entries(dependencies.imports)) {
+      const fromPos = findPosition(sourceFile);
+      if (!fromPos) {
+        console.log('[Road] Source not found:', sourceFile);
+        continue;
+      }
+
+      for (const imp of imports) {
+        const toPos = findPosition(imp.target);
+        if (!toPos) {
+          console.log('[Road] Target not found:', imp.target);
+          continue;
+        }
+
+        connections.push({
+          from: [fromPos[0], 0.5, fromPos[2]],
+          to: [toPos[0], 0.5, toPos[2]],
+          type: imp.type,
+          sourceFile,
+          targetFile: imp.target,
+        });
+      }
+    }
+
+    console.log('[Road] Total connections:', connections.length);
+    console.log('[Road] Available paths:', Array.from(pathToPosition.keys()).slice(0, 10));
+
+    return connections;
+  }, [dependencies, pathToPosition]);
+
   const colliders = useMemo<ColliderBox[]>(() => {
-    const padding = 0.3; // 壁から少し離して当たり判定
+    const padding = 0.3;
     return buildings.map((b) => {
       const halfW = b.scale[0] / 2 + padding;
       const halfD = b.scale[2] / 2 + padding;
@@ -600,16 +1027,20 @@ const CityContent = ({ layout, onHover, onFlyModeChange }: CityContentProps) => 
   const initialPosition = useMemo((): [number, number, number] => {
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerZ = (bounds.minZ + bounds.maxZ) / 2;
-    // 高い位置から俯瞰できるように
     return [centerX, 30, centerZ + 20];
   }, [bounds]);
 
   return (
     <>
       <Environment />
-      <Roads bounds={bounds} />
+      <GroundRoads bounds={bounds} />
       <Districts districts={districts} />
       <Buildings buildings={buildings} onHover={onHover} />
+      <DependencyRoads
+        connections={roadConnections}
+        hoveredFile={hoveredFile}
+        onHover={onRoadHover}
+      />
       <StreetLights bounds={bounds} />
       <FirstPersonControls
         initialPosition={initialPosition}
@@ -631,15 +1062,16 @@ const CityContent = ({ layout, onHover, onFlyModeChange }: CityContentProps) => 
 
 interface CitySceneProps {
   data: FileNode;
+  dependencies: DependencyGraph | null;
 }
 
-export const CityScene = ({ data }: CitySceneProps) => {
+export const CityScene = ({ data, dependencies }: CitySceneProps) => {
   const [hoveredNode, setHoveredNode] = useState<CityNode | null>(null);
+  const [hoveredRoad, setHoveredRoad] = useState<RoadConnection | null>(null);
   const [isLocked, setIsLocked] = useState(false);
   const [isFlying, setIsFlying] = useState(true);
 
   // レイアウト計算（メモ化）
-  // 都市サイズを固定して、大規模プロジェクトでもコンパクトに
   const layout = useMemo(() => {
     return generateCityLayout(data, 0, 0, 80, 80);
   }, [data]);
@@ -655,11 +1087,28 @@ export const CityScene = ({ data }: CitySceneProps) => {
 
   const handleHover = useCallback((node: CityNode | null) => {
     setHoveredNode(node);
+    // 建物ホバー時は道路ホバーを解除（優先度: 建物 > 道路）
+    if (node) setHoveredRoad(null);
   }, []);
+
+  const handleRoadHover = useCallback(
+    (connection: RoadConnection | null) => {
+      // 建物ホバー中は道路ホバーを無視
+      setHoveredRoad((prev) => (hoveredNode ? null : connection));
+    },
+    [hoveredNode]
+  );
 
   const handleFlyModeChange = useCallback((flying: boolean) => {
     setIsFlying(flying);
   }, []);
+
+  // ホバー中のファイルパス（複数形式で検索可能にするため両方保持）
+  const hoveredFilePath = useMemo(() => {
+    if (!hoveredNode || hoveredNode.type !== 'file') return null;
+    // 相対パス形式
+    return hoveredNode.path.replace(/^[^/]+\//, '');
+  }, [hoveredNode]);
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
@@ -668,7 +1117,14 @@ export const CityScene = ({ data }: CitySceneProps) => {
         shadows
         gl={{ antialias: true, alpha: false }}
       >
-        <CityContent layout={layout} onHover={handleHover} onFlyModeChange={handleFlyModeChange} />
+        <CityContent
+          layout={layout}
+          dependencies={dependencies}
+          onHover={handleHover}
+          onRoadHover={handleRoadHover}
+          onFlyModeChange={handleFlyModeChange}
+          hoveredFile={hoveredFilePath}
+        />
         <EffectComposer>
           <Bloom intensity={0.5} luminanceThreshold={0.4} luminanceSmoothing={0.9} />
           <Vignette eskil={false} offset={0.1} darkness={0.5} />
@@ -680,7 +1136,8 @@ export const CityScene = ({ data }: CitySceneProps) => {
       {!isLocked && <PointerLockOverlay isLocked={isLocked} />}
       {isLocked && <Crosshair />}
       {isLocked && <ControlsHUD isFlying={isFlying} />}
-      {isLocked && <BuildingInfo node={hoveredNode} />}
+      {isLocked && hoveredNode && <BuildingInfo node={hoveredNode} dependencies={dependencies} />}
+      {isLocked && !hoveredNode && hoveredRoad && <RoadInfo connection={hoveredRoad} />}
     </div>
   );
 };

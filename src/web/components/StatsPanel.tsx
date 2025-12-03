@@ -1,21 +1,34 @@
 import React, { useMemo } from 'react';
-import { FileNode } from '../../shared/fileNode';
+import { FileNode, DependencyGraph } from '../../shared/fileNode';
 import { calculateStats, getSortedExtensions } from '../utils/stats';
 import { formatFileSize, getColorForExtension } from '../utils/colors';
 
 interface StatsPanelProps {
   data: FileNode;
+  dependencies: DependencyGraph | null;
 }
 
 /**
  * ディレクトリ構造の統計情報を表示するHUDパネル
  */
-export const StatsPanel = ({ data }: StatsPanelProps) => {
+export const StatsPanel = ({ data, dependencies }: StatsPanelProps) => {
   const stats = useMemo(() => calculateStats(data), [data]);
   const topExtensions = useMemo(
     () => getSortedExtensions(stats.extensionCounts).slice(0, 8),
     [stats]
   );
+
+  // 依存関係の統計
+  const depStats = useMemo(() => {
+    if (!dependencies) return null;
+    const importCount = Object.values(dependencies.imports).reduce(
+      (sum, imports) => sum + imports.length,
+      0
+    );
+    const filesWithImports = Object.keys(dependencies.imports).length;
+    const importedFiles = Object.keys(dependencies.importedBy).length;
+    return { importCount, filesWithImports, importedFiles };
+  }, [dependencies]);
 
   return (
     <div
@@ -103,6 +116,36 @@ export const StatsPanel = ({ data }: StatsPanelProps) => {
         </div>
       )}
 
+      {/* 依存関係統計 */}
+      {depStats && (
+        <div style={{ marginBottom: '20px' }}>
+          <div
+            style={{
+              color: '#94a3b8',
+              fontSize: '11px',
+              marginBottom: '10px',
+              textTransform: 'uppercase',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <span style={{ fontSize: '14px' }}>🛤️</span>
+            Import Roads
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '8px',
+            }}
+          >
+            <MiniStatCard label="Roads" value={depStats.importCount} color="#f97316" />
+            <MiniStatCard label="Exporters" value={depStats.importedFiles} color="#8b5cf6" />
+          </div>
+        </div>
+      )}
+
       {/* ファイルタイプ内訳 */}
       <div>
         <div
@@ -124,6 +167,33 @@ export const StatsPanel = ({ data }: StatsPanelProps) => {
     </div>
   );
 };
+
+interface MiniStatCardProps {
+  label: string;
+  value: number;
+  color: string;
+}
+
+/**
+ * ミニ統計カード（2カラム用）
+ */
+const MiniStatCard = ({ label, value, color }: MiniStatCardProps) => (
+  <div
+    style={{
+      background: 'rgba(30, 41, 59, 0.5)',
+      padding: '8px 10px',
+      borderRadius: '6px',
+      border: '1px solid rgba(100, 116, 139, 0.2)',
+    }}
+  >
+    <div
+      style={{ color: '#64748b', fontSize: '9px', textTransform: 'uppercase', marginBottom: '2px' }}
+    >
+      {label}
+    </div>
+    <div style={{ color, fontSize: '16px', fontWeight: 'bold' }}>{value}</div>
+  </div>
+);
 
 interface StatCardProps {
   label: string;
