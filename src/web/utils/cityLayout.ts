@@ -45,11 +45,79 @@ const calculateNodeSize = (node: FileNode): number => {
  * ファイルサイズからビルの高さを計算（対数スケール）
  */
 const calculateBuildingHeight = (sizeInBytes: number): number => {
-  if (!sizeInBytes || sizeInBytes === 0) return 0.5;
-  // 対数スケールで高さを計算
-  // 100B -> 0.5, 1KB -> 1.5, 10KB -> 2.5, 100KB -> 3.5, 1MB -> 4.5, 10MB -> 5.5
-  const logSize = Math.log10(sizeInBytes + 1);
-  return Math.max(0.5, Math.min(logSize * 1.2, 12));
+  if (!sizeInBytes || sizeInBytes === 0) return 1;
+  // 緩やかなログスケール（小〜中サイズの過剰な伸びを抑制）
+  // 1B ≈1.2階, 1KB ≈9階, 10KB ≈15階, 100KB ≈21階, 1MB ≈28階, 100MB ≈42階
+  const logSize = Math.log10(sizeInBytes + 10);
+  const height = (logSize - 1) * 7 + 2;
+  return Math.max(1, Math.min(height, 80));
+};
+
+// 足元が極小のとき高さを自動的に抑える（棒線防止）
+const applyFootprintHeightScale = (height: number, width: number, depth: number): number => {
+  const area = Math.max(width * depth, 0.0001);
+  // 2x2=4 を基準。面積が小さいほど係数を下げ、0.35〜1にクランプ。
+  const factor = Math.min(1, Math.max(0.25, Math.sqrt(area) / 3));
+  return height * factor;
+};
+
+// 足元の最小/最大サイズとアスペクト比制御（横に長い「コンテナ」化を防ぐ）
+const MIN_FOOTPRINT = 1.2;
+const MIN_VISUAL_FOOTPRINT = 0.8; // これ未満にはしない（棒線防止）
+const MAX_FOOTPRINT = 10;
+const MIN_ASPECT = 0.6; // width/depth の下限
+const MAX_ASPECT = 1.8; // width/depth の上限
+const SAFETY_INSET = 0.2; // セル内にさらに余白を作る（オーバーラップ保険）
+const CELL_PADDING = 0.4; // セル中央に寄せる際の基準余白
+
+const shapeFootprint = (width: number, depth: number): { width: number; depth: number } => {
+  if (width <= 0 || depth <= 0) return { width, depth };
+
+  // もとのセルより大きくならないよう上限を保持
+  const maxW = width;
+  const maxD = depth;
+
+  let w = width;
+  let d = depth;
+
+  // アスペクト比補正: 長い辺を削るだけで短い辺は伸ばさない
+  const aspect = w / d;
+  if (aspect > MAX_ASPECT) {
+    w = Math.min(maxW, d * MAX_ASPECT);
+  } else if (aspect < MIN_ASPECT) {
+    d = Math.min(maxD, w / MIN_ASPECT);
+  }
+
+  // ここで再度ガード（上の式で max 制限しているが保険）
+  w = Math.min(w, maxW);
+  d = Math.min(d, maxD);
+
+  // 大きすぎる場合だけ全体を縮める。小さすぎても拡大しない。
+  const overScale = Math.max(w / MAX_FOOTPRINT, d / MAX_FOOTPRINT, 1);
+  if (overScale > 1) {
+    const scale = 1 / overScale;
+    w *= scale;
+    d *= scale;
+  }
+
+  // 最低サイズを確保（セルの空きがある範囲で均等拡大）
+  const usableW = Math.max(0.2, maxW - SAFETY_INSET * 2);
+  const usableD = Math.max(0.2, maxD - SAFETY_INSET * 2);
+  if (w < MIN_FOOTPRINT || d < MIN_FOOTPRINT) {
+    const scaleUp = Math.min(usableW / w, usableD / d, MIN_FOOTPRINT / Math.min(w, d));
+    w = Math.min(usableW, w * scaleUp);
+    d = Math.min(usableD, d * scaleUp);
+  }
+
+  // 追加のインセットで必ず隣と離す
+  w = Math.max(0.2, Math.min(w, usableW) - SAFETY_INSET);
+  d = Math.max(0.2, Math.min(d, usableD) - SAFETY_INSET);
+
+  // 最終的な見た目の最小足元を保証（棒線防止）
+  w = Math.max(MIN_VISUAL_FOOTPRINT, Math.min(w, usableW));
+  d = Math.max(MIN_VISUAL_FOOTPRINT, Math.min(d, usableD));
+
+  return { width: w, depth: d };
 };
 
 /**
@@ -261,11 +329,30 @@ export const generateCityLayout = (
         type: 'file',
         size: item.node.size || 100,
         depth: nodeDepth + 1,
-        x: item.x + gap,
-        z: item.z + gap,
-        width: Math.max(item.w - gap * 2, 0.2),
-        depth_z: Math.max(item.d - gap * 2, 0.2),
-        height: calculateBuildingHeight(item.node.size || 0),
+        ...(() => {
+          // ギャップ適用後のセルに収まるよう中央寄せで縮める
+          const rawW = Math.max(item.w - gap * 2, 0.2);
+          const rawD = Math.max(item.d - gap * 2, 0.2);
+          const shaped = shapeFootprint(rawW, rawD);
+          // 小さい建物では余白を減らし、足元を確保
+          const dynamicPadding = Math.min(CELL_PADDING, shaped.width * 0.25, shaped.depth * 0.25);
+          const finalW = Math.max(MIN_VISUAL_FOOTPRINT, shaped.width - dynamicPadding * 2);
+          const finalD = Math.max(MIN_VISUAL_FOOTPRINT, shaped.depth - dynamicPadding * 2);
+
+          const marginX = Math.max(0, (rawW - finalW) / 2);
+          const marginZ = Math.max(0, (rawD - finalD) / 2);
+
+          const baseHeight = calculateBuildingHeight(item.node.size || 0);
+          const adjustedHeight = applyFootprintHeightScale(baseHeight, finalW, finalD);
+
+          return {
+            x: item.x + gap + marginX,
+            z: item.z + gap + marginZ,
+            width: finalW,
+            depth_z: finalD,
+            height: adjustedHeight,
+          };
+        })(),
       });
     }
   }

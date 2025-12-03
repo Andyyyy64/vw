@@ -2,6 +2,14 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
+export interface ColliderBox {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  maxY: number;
+}
+
 interface FirstPersonControlsProps {
   /** 移動速度 */
   speed?: number;
@@ -21,6 +29,10 @@ interface FirstPersonControlsProps {
   onFlyModeChange?: (flying: boolean) => void;
   /** 初期飛行モード */
   initialFlyMode?: boolean;
+  /** 建物などの当たり判定ボックス */
+  colliders?: ColliderBox[];
+  /** カメラの当たり判定半径（XZ平面） */
+  colliderRadius?: number;
 }
 
 /**
@@ -38,6 +50,8 @@ export const FirstPersonControls = ({
   enabled = true,
   onFlyModeChange,
   initialFlyMode = false,
+  colliders = [],
+  colliderRadius = 0.8,
 }: FirstPersonControlsProps) => {
   const { camera, gl } = useThree();
 
@@ -63,6 +77,33 @@ export const FirstPersonControls = ({
   const isFlying = useRef(initialFlyMode);
   const lastSpaceTime = useRef(0);
   const isOnGround = useRef(!initialFlyMode);
+
+  // コライダー参照（更新コストを抑えるためRefに保持）
+  const collidersRef = useRef<ColliderBox[]>(colliders);
+
+  useEffect(() => {
+    collidersRef.current = colliders;
+  }, [colliders]);
+
+  // 指定座標に移動した場合に衝突するか判定
+  const willCollide = useCallback(
+    (nextPos: THREE.Vector3) => {
+      const radius = colliderRadius;
+      for (const box of collidersRef.current) {
+        // 高度がビルの上より高ければスキップ（屋根より上は通過可）
+        if (nextPos.y > box.maxY + 0.2) continue;
+
+        const intersectsX = nextPos.x + radius > box.minX && nextPos.x - radius < box.maxX;
+        const intersectsZ = nextPos.z + radius > box.minZ && nextPos.z - radius < box.maxZ;
+
+        if (intersectsX && intersectsZ) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [colliderRadius]
+  );
 
   // 歩行ボブ（上下動）
   const bobPhase = useRef(0);
@@ -136,7 +177,7 @@ export const FirstPersonControls = ({
           break;
       }
     },
-    [enabled, onFlyModeChange]
+    [enabled]
   );
 
   // キーアップハンドラ
@@ -244,19 +285,42 @@ export const FirstPersonControls = ({
     right.normalize();
 
     // 移動ベクトルを計算
-    const velocity = new THREE.Vector3();
+    const moveDir = new THREE.Vector3();
 
-    if (keys.current.forward) velocity.add(direction);
-    if (keys.current.backward) velocity.sub(direction);
-    if (keys.current.right) velocity.add(right);
-    if (keys.current.left) velocity.sub(right);
+    if (keys.current.forward) moveDir.add(direction);
+    if (keys.current.backward) moveDir.sub(direction);
+    if (keys.current.right) moveDir.add(right);
+    if (keys.current.left) moveDir.sub(right);
 
     // 移動と歩行ボブ
-    const isMoving = velocity.length() > 0;
+    const isMoving = moveDir.length() > 0;
+    let verticalFromPitch = 0;
     if (isMoving) {
-      velocity.normalize();
-      velocity.multiplyScalar(moveDistance);
-      camera.position.add(velocity);
+      moveDir.normalize();
+      const moveVec = moveDir.multiplyScalar(moveDistance);
+      verticalFromPitch = isFlying.current ? moveVec.y : 0;
+
+      const horizontalMove = new THREE.Vector3(moveVec.x, 0, moveVec.z);
+      const nextPos = camera.position.clone().add(horizontalMove);
+
+      if (!willCollide(nextPos)) {
+        camera.position.copy(nextPos);
+      } else {
+        // スライド移動：各軸ごとに判定して通れる方向だけ進める
+        if (Math.abs(horizontalMove.x) > 1e-6) {
+          const nextX = camera.position.clone().add(new THREE.Vector3(horizontalMove.x, 0, 0));
+          if (!willCollide(nextX)) {
+            camera.position.setX(nextX.x);
+          }
+        }
+
+        if (Math.abs(horizontalMove.z) > 1e-6) {
+          const nextZ = camera.position.clone().add(new THREE.Vector3(0, 0, horizontalMove.z));
+          if (!willCollide(nextZ)) {
+            camera.position.setZ(nextZ.z);
+          }
+        }
+      }
     }
 
     // 地上モードでの歩行ボブ（上下動）
@@ -279,7 +343,7 @@ export const FirstPersonControls = ({
     // 垂直移動（ジャンプ/飛行）
     if (isFlying.current) {
       // 飛行モード
-      let newY = camera.position.y;
+      let newY = camera.position.y + verticalFromPitch;
       if (keys.current.up) {
         newY += moveDistance;
       }
@@ -287,7 +351,13 @@ export const FirstPersonControls = ({
         newY -= moveDistance;
       }
       // 最低高度制限
-      camera.position.setY(Math.max(newY, groundHeight));
+      newY = Math.max(newY, groundHeight);
+
+      const nextYPos = camera.position.clone();
+      nextYPos.y = newY;
+      if (!willCollide(nextYPos)) {
+        camera.position.setY(newY);
+      }
     } else {
       // 通常モード（重力あり）
       verticalVelocity.current -= 30 * delta; // 重力
@@ -299,7 +369,14 @@ export const FirstPersonControls = ({
         verticalVelocity.current = 0;
         isOnGround.current = true;
       } else {
-        camera.position.setY(newY);
+        const nextYPos = camera.position.clone();
+        nextYPos.y = newY;
+
+        if (!willCollide(nextYPos)) {
+          camera.position.setY(newY);
+        } else {
+          verticalVelocity.current = 0;
+        }
       }
     }
   });

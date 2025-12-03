@@ -12,7 +12,7 @@ import {
   getLayoutBounds,
 } from '../utils/cityLayout';
 import { getColorForExtension } from '../utils/colors';
-import { FirstPersonControls, PointerLockOverlay } from './FirstPersonControls';
+import { FirstPersonControls, PointerLockOverlay, ColliderBox } from './FirstPersonControls';
 
 // ============================
 // 型定義
@@ -567,6 +567,21 @@ const CityContent = ({ layout, onHover, onFlyModeChange }: CityContentProps) => 
     });
   }, [layout]);
 
+  const colliders = useMemo<ColliderBox[]>(() => {
+    const padding = 0.3; // 壁から少し離して当たり判定
+    return buildings.map((b) => {
+      const halfW = b.scale[0] / 2 + padding;
+      const halfD = b.scale[2] / 2 + padding;
+      return {
+        minX: b.position[0] - halfW,
+        maxX: b.position[0] + halfW,
+        minZ: b.position[2] - halfD,
+        maxZ: b.position[2] + halfD,
+        maxY: b.scale[1],
+      };
+    });
+  }, [buildings]);
+
   const districts = useMemo(() => {
     const flattened = flattenDistricts(layout);
     return flattened.map(
@@ -603,6 +618,8 @@ const CityContent = ({ layout, onHover, onFlyModeChange }: CityContentProps) => 
         groundHeight={2}
         onFlyModeChange={onFlyModeChange}
         initialFlyMode={true}
+        colliders={colliders}
+        colliderRadius={0.9}
       />
     </>
   );
