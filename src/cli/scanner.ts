@@ -1,13 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-
-export interface FileNode {
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-  children?: FileNode[];
-  size?: number;
-}
+import { FileNode } from '../shared/fileNode';
 
 export const scanDirectory = async (dirPath: string): Promise<FileNode> => {
   const stats = await fs.stat(dirPath);
